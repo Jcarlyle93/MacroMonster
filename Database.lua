@@ -120,7 +120,6 @@ function Addon:CaptureActionBarState()
             }
         end
     end
-    self:Print("Captured action bar state: " .. table.getn(state) .. " slots populated")
     return state
 end
 
@@ -225,34 +224,22 @@ function Addon:LoadMacroSet(setName, skipActionBarRestore)
     end
     
     local macros = MacroMonsterDB.sets[setName]
-    self:Print("Loading macro set: " .. setName)
     
-    -- STEP 1: Capture current action bar state and save it to the PREVIOUS set
-    if not skipActionBarRestore and MacroMonsterDB.activeSet then
-        local currentBarState = self:CaptureActionBarState()
-        MacroMonsterDB.setBarStates[MacroMonsterDB.activeSet] = currentBarState
-        self:Print("Saved action bar state for set '" .. MacroMonsterDB.activeSet .. "'")
-    end
-    
-    -- STEP 2: Delete ALL current character macros
+    -- Delete ALL current character macros
     local _, numCharMacros = GetNumMacros()
-    self:Print("Deleting " .. numCharMacros .. " current macros...")
     for i = 1, numCharMacros do
         DeleteMacro(121)  -- Always delete from index 121 since indices shift
     end
     
-    -- STEP 3: Create all macros from the stored set
-    self:Print("Creating " .. #macros .. " macros from set '" .. setName .. "'...")
+    -- Create all macros from the stored set
     for _, macro in ipairs(macros) do
         local index = CreateMacro(macro.name, macro.icon, macro.body, true)
-        if index then
-            self:Print("  Created: " .. macro.name .. " at index " .. index)
-        else
+        if not index then
             self:PrintError("Failed to create macro '" .. macro.name .. "'")
         end
     end
     
-    -- STEP 4: Restore macros to their saved action bar positions
+    -- Restore macros to their saved action bar positions
     self:RestoreMacroPositions(setName)
     
     -- Update active set

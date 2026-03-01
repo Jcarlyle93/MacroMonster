@@ -68,22 +68,15 @@ end
 
 -- Handle spec changes (dual spec)
 function Addon:OnSpecChanged()
-    self:Print("DEBUG: OnSpecChanged triggered")
-    
     -- Delay checking the spec until WoW has fully switched talent groups
     C_Timer.After(1.0, function()
         local currentSpec = GetActiveTalentGroup()
-        self:Print("DEBUG: Current spec after delay: " .. tostring(currentSpec))
-        
         local specName = (currentSpec == 1) and "primary" or "secondary"
         local assignedSet = self:GetSpecAssignment(specName)
         
         if assignedSet then
-            self:Print("Spec changed to " .. specName .. ", loading assigned set: " .. assignedSet)
-            
             -- Load the macro set with full action bar state restoration
             if self:LoadMacroSet(assignedSet, false) then  -- false = restore action bars
-                self:Print("Macro set loaded and action bars restored")
                 if Addon.mainFrame and Addon.mainFrame:IsShown() then
                     self:UpdateUI()
                 end
@@ -162,14 +155,10 @@ function Addon:HookMacroFrame()
     -- Mark as hooked to avoid multiple hooks
     MacroFrame._MacroMonsterHooked = true
     
-    Addon:Print("Hooking into MacroFrame with hooksecurefunc")
-    
     -- Use hooksecurefunc - most reliable for Classic/TBC
     -- This is a POST-hook, so it fires AFTER MacroFrame's Show/Hide
     hooksecurefunc(MacroFrame, "Show", function()
-        Addon:Print("DEBUG: MacroFrame.Show hook fired!")
         if Addon.mainFrame then
-            Addon:Print("DEBUG: Addon.mainFrame exists, showing and positioning")
             Addon.mainFrame:Show()
             -- Ensure proper positioning to the right of MacroFrame (and popup if visible)
             Addon:PositionMainFrame()
@@ -181,14 +170,10 @@ function Addon:HookMacroFrame()
                 end
             end)
             Addon:UpdateUI()
-            Addon:Print("DEBUG: Addon.mainFrame shown and positioned")
-        else
-            Addon:Print("DEBUG: Addon.mainFrame is nil!")
         end
     end)
     
     hooksecurefunc(MacroFrame, "Hide", function()
-        Addon:Print("DEBUG: MacroFrame.Hide hook fired!")
         if Addon.mainFrame then
             Addon.mainFrame:Hide()
         end
@@ -196,18 +181,12 @@ function Addon:HookMacroFrame()
     
     -- Sync current state - if MacroFrame is already shown, show MacroMonster
     if MacroFrame:IsShown() then
-        Addon:Print("DEBUG: MacroFrame is currently shown, showing MacroMonster now")
         if Addon.mainFrame then
             Addon.mainFrame:Show()
             Addon:PositionMainFrame()
             Addon:SyncMainFrameHeight()
             Addon:UpdateUI()
-            Addon:Print("MacroFrame hooked and synced - MacroMonster now attached to right of /macro window")
-        else
-            Addon:Print("DEBUG: Addon.mainFrame is nil during sync!")
         end
-    else
-        Addon:Print("DEBUG: MacroFrame is not currently shown")
     end
 
     -- Hook popup now if available, or shortly after if it's created lazily
