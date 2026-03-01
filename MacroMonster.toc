@@ -1,0 +1,11 @@
+## Interface: 20501
+## Title: MacroMonster
+## Notes: Enhanced macro management - save and switch between macro sets
+## Author: Zyxw - Spineshatter
+## Version: 0.1.0
+## SavedVariablesPerCharacter: MacroMonsterDB
+
+# Core Files
+MacroMonster.lua
+Database.lua
+UI.lua

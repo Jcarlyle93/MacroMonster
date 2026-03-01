@@ -1,0 +1,37 @@
+# MacroMonster .gitignore
+
+# WoW-specific files to ignore
+*.lua~
+*.luac
+*.bak
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS-specific
+.vs/
+.vscode/
+*.code-workspace
+
+# Build artifacts (if any)
+/dist/
+/build/
+
+# Local testing
+local.lua
+test_*.lua
+
+# CurseForge packaging (if generated locally)
+.pkgmeta
+*.zip
+*.tar.gz
+
+# Old files from development
+*_old.lua
+*_new.lua
