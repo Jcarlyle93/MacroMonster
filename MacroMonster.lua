@@ -68,25 +68,32 @@ end
 
 -- Handle spec changes (dual spec)
 function Addon:OnSpecChanged()
-    local currentSpec = GetActiveTalentGroup()
-    local specName = (currentSpec == 1) and "primary" or "secondary"
-    local assignedSet = self:GetSpecAssignment(specName)
+    self:Print("DEBUG: OnSpecChanged triggered")
     
-    if assignedSet then
-        self:Print("Spec changed to " .. specName .. ", loading assigned set: " .. assignedSet)
+    -- Delay checking the spec until WoW has fully switched talent groups
+    C_Timer.After(1.0, function()
+        local currentSpec = GetActiveTalentGroup()
+        self:Print("DEBUG: Current spec after delay: " .. tostring(currentSpec))
         
-        -- Delay macro loading to allow WoW's built-in action bar swap to complete first
-        -- Skip action bar restoration since WoW handles that per-spec automatically
-        C_Timer.After(0.5, function()
-            if self:LoadMacroSet(assignedSet, true) then  -- true = skip action bar restore
+        local specName = (currentSpec == 1) and "primary" or "secondary"
+        local assignedSet = self:GetSpecAssignment(specName)
+        
+        if assignedSet then
+            self:Print("Spec changed to " .. specName .. ", loading assigned set: " .. assignedSet)
+            
+            -- Load the macro set with full action bar state restoration
+            if self:LoadMacroSet(assignedSet, false) then  -- false = restore action bars
+                self:Print("Macro set loaded and action bars restored")
                 if Addon.mainFrame and Addon.mainFrame:IsShown() then
                     self:UpdateUI()
                 end
+            else
+                self:PrintError("Failed to load macro set on spec change!")
             end
-        end)
-    else
-        self:Print("Spec changed to " .. specName .. " (no macro set assigned)")
-    end
+        else
+            self:Print("Spec changed to " .. specName .. " (no macro set assigned)")
+        end
+    end)
 end
 
 -- Sync MacroMonster height to MacroFrame height

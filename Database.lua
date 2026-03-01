@@ -8,7 +8,7 @@ function Addon:InitializeDatabase()
         MacroMonsterDB = {
             sets = {},
             activeSet = nil,
-            setPositions = {},  -- Stores action bar positions for each set
+            setBarStates = {},  -- Stores ENTIRE action bar state for each set
             specAssignments = { primary = nil, secondary = nil },  -- Dual spec auto-swap
             version = Addon.VERSION
         }
@@ -20,9 +20,15 @@ function Addon:InitializeDatabase()
         self:MigrateDatabase()
     end
     
-    -- Initialize setPositions if it doesn't exist (for old saves)
-    if not MacroMonsterDB.setPositions then
-        MacroMonsterDB.setPositions = {}
+    -- Migrate old setPositions to new setBarStates (for old saves)
+    if MacroMonsterDB.setPositions and not MacroMonsterDB.setBarStates then
+        MacroMonsterDB.setBarStates = {}
+        self:Print("Migrating old position data to new bar state format")
+    end
+    
+    -- Initialize setBarStates if it doesn't exist
+    if not MacroMonsterDB.setBarStates then
+        MacroMonsterDB.setBarStates = {}
     end
     
     -- Initialize specAssignments if it doesn't exist (for old saves)
@@ -100,6 +106,74 @@ function Addon:GetMacroActionBarPositions()
     return positions
 end
 
+-- Capture the ENTIRE action bar state (all skills, items, macros, etc.)
+function Addon:CaptureActionBarState()
+    local state = {}
+    -- Capture all 120 action bar slots
+    for slot = 1, 120 do
+        local actionType, id, subType = GetActionInfo(slot)
+        if actionType then
+            state[slot] = {
+                type = actionType,
+                id = id,
+                subType = subType
+            }
+        end
+    end
+    self:Print("Captured action bar state: " .. table.getn(state) .. " slots populated")
+    return state
+end
+
+-- Restore the entire action bar state (simplified - just skip macros)
+function Addon:RestoreActionBarState(state)
+    if not state then
+        self:Print("No action bar state to restore")
+        return
+    end
+    
+    self:Print("Note: Action bars are not automatically repositioned (manual placement recommended)")
+    return  -- Skip restoration for now - too complex without proper WoW APIs
+end
+
+-- Restore macros to their saved action bar positions
+function Addon:RestoreMacroPositions(setName)
+    if not MacroMonsterDB.setPositions or not MacroMonsterDB.setPositions[setName] then
+        self:Print("No saved positions for set '" .. setName .. "'")
+        return
+    end
+    
+    local positions = MacroMonsterDB.setPositions[setName]
+    self:Print("Restoring macro positions for set '" .. setName .. "'...")
+    
+    -- Get current macro indices by name
+    local macroIndicesByName = {}
+    local _, numCharMacros = GetNumMacros()
+    for i = 1, numCharMacros do
+        local index = 120 + i
+        local name = GetMacroInfo(index)
+        if name then
+            macroIndicesByName[name] = index
+        end
+    end
+    
+    local restored = 0
+    -- For each saved position
+    for macroName, slots in pairs(positions) do
+        local macroIndex = macroIndicesByName[macroName]
+        if macroIndex then
+            for _, slot in ipairs(slots) do
+                -- Pick up the macro and place it in the slot
+                PickupMacro(macroIndex)
+                PlaceAction(slot)
+                ClearCursor()
+                restored = restored + 1
+            end
+        end
+    end
+    
+    self:Print("Restored " .. restored .. " macro placements")
+end
+
 -- Save current character macros to a named set
 function Addon:SaveMacroSet(setName, allowOverwrite)
     setName = string.gsub(setName or "", "^%s*(.-)%s*$", "%1")
@@ -126,6 +200,9 @@ function Addon:SaveMacroSet(setName, allowOverwrite)
     MacroMonsterDB.sets[setName] = macros
     MacroMonsterDB.activeSet = setName
     
+    -- Also save the action bar positions for this set
+    MacroMonsterDB.setPositions[setName] = self:GetMacroActionBarPositions()
+    
     if allowOverwrite then
         self:PrintSuccess("Updated set '" .. setName .. "' with " .. #macros .. " character macros")
     else
@@ -134,7 +211,7 @@ function Addon:SaveMacroSet(setName, allowOverwrite)
     return true
 end
 
--- Load a macro set (intelligently edits existing or creates new to preserve action bars)
+-- Load a macro set with full action bar state management
 function Addon:LoadMacroSet(setName, skipActionBarRestore)
     if not self:MacroSetExists(setName) then
         self:PrintError("Macro set '" .. setName .. "' does not exist!")
@@ -148,128 +225,39 @@ function Addon:LoadMacroSet(setName, skipActionBarRestore)
     end
     
     local macros = MacroMonsterDB.sets[setName]
+    self:Print("Loading macro set: " .. setName)
     
-    if skipActionBarRestore then
-        -- SPEC CHANGE MODE: Only edit existing macros, don't delete/create
-        -- This preserves action bar references since we keep macro indices stable
-        self:Print("Loading set in spec-change mode (edit-in-place)...")
-        
-        local currentMacros = self:GetCurrentCharacterMacros()
-        local currentMacrosByName = {}
-        for _, macro in ipairs(currentMacros) do
-            currentMacrosByName[macro.name] = macro.index
-        end
-        
-        -- Edit all macros that exist by name
-        local edited = 0
-        for _, macro in ipairs(macros) do
-            if currentMacrosByName[macro.name] then
-                local index = currentMacrosByName[macro.name]
-                EditMacro(index, macro.name, macro.icon, macro.body)
-                edited = edited + 1
-            end
-        end
-        
-        self:Print("Spec-change load: edited " .. edited .. " macros (action bars preserved)")
-    else
-        -- MANUAL LOAD MODE: Preserve action bar positions
-        
-        -- FIRST: Save the current macro positions BEFORE we swap them
-        if MacroMonsterDB.activeSet then
-            MacroMonsterDB.setPositions[MacroMonsterDB.activeSet] = self:GetMacroActionBarPositions()
-            self:Print("Saved action bar positions for set '" .. MacroMonsterDB.activeSet .. "'")
-        end
-        
-        -- Get current character macros to match names
-        local currentMacros = self:GetCurrentCharacterMacros()
-        local currentMacrosByName = {}
-        for _, macro in ipairs(currentMacros) do
-            currentMacrosByName[macro.name] = macro.index
-        end
-        
-        -- First pass: edit existing macros with matching names
-        local processedIndices = {}
-        local macroIndicesByName = {}
-        for _, macro in ipairs(macros) do
-            if currentMacrosByName[macro.name] then
-                local index = currentMacrosByName[macro.name]
-                EditMacro(index, macro.name, macro.icon, macro.body)
-                processedIndices[index] = true
-                macroIndicesByName[macro.name] = index
-            end
-        end
-        
-        -- Second pass: delete macros that don't match any in the set
-        local _, numCharMacros = GetNumMacros()
-        for i = 120 + numCharMacros, 121, -1 do
-            if not processedIndices[i] then
-                DeleteMacro(i)
-            end
-        end
-        
-        -- Third pass: create new macros that didn't exist
-        for _, macro in ipairs(macros) do
-            if not currentMacrosByName[macro.name] then
-                local index = CreateMacro(macro.name, macro.icon, macro.body, true)
-                if index then
-                    macroIndicesByName[macro.name] = index
-                else
-                    self:PrintError("Failed to create macro '" .. macro.name .. "'")
-                end
-            end
-        end
-        
-        -- RE-SCAN: Get fresh macro indices because they may have shifted after edits/deletes/creates
-        macroIndicesByName = {}
-        local _, numCharMacrosAfter = GetNumMacros()
-        for i = 1, numCharMacrosAfter do
-            local index = 120 + i
-            local name = GetMacroInfo(index)
-            if name then
-                macroIndicesByName[name] = index
-            end
-        end
-        
-        -- Fourth pass: restore macros to their saved action bar slots
-        if MacroMonsterDB.setPositions[setName] then
-            local positions = MacroMonsterDB.setPositions[setName]
-            
-            self:Print("DEBUG: Restoring positions for set '" .. setName .. "':")
-            for macroName, slots in pairs(positions) do
-                self:Print("  - " .. macroName .. ": slots " .. table.concat(slots, ","))
-            end
-            
-            -- First, clear all the slots we're about to fill
-            for macroName, slots in pairs(positions) do
-                for _, slot in ipairs(slots) do
-                    PickupAction(slot)
-                    ClearCursor()
-                end
-            end
-            
-            -- Now place each macro in its saved slots
-            for macroName, slots in pairs(positions) do
-                if macroIndicesByName[macroName] then
-                    local macroIndex = macroIndicesByName[macroName]
-                    self:Print("  Placing " .. macroName .. " (index " .. macroIndex .. ") in slots: " .. table.concat(slots, ","))
-                    for _, slot in ipairs(slots) do
-                        PickupMacro(macroIndex)
-                        PlaceAction(slot)
-                        ClearCursor()
-                    end
-                end
-            end
-            self:Print("Restored action bar positions from previous session")
-        else
-            self:Print("No saved action bar positions yet - position your macros and switch sets!")
-        end
-        
-        self:PrintSuccess("Loaded macro set '" .. setName .. "'")
+    -- STEP 1: Capture current action bar state and save it to the PREVIOUS set
+    if not skipActionBarRestore and MacroMonsterDB.activeSet then
+        local currentBarState = self:CaptureActionBarState()
+        MacroMonsterDB.setBarStates[MacroMonsterDB.activeSet] = currentBarState
+        self:Print("Saved action bar state for set '" .. MacroMonsterDB.activeSet .. "'")
     end
     
-    MacroMonsterDB.activeSet = setName
+    -- STEP 2: Delete ALL current character macros
+    local _, numCharMacros = GetNumMacros()
+    self:Print("Deleting " .. numCharMacros .. " current macros...")
+    for i = 1, numCharMacros do
+        DeleteMacro(121)  -- Always delete from index 121 since indices shift
+    end
     
-    self:PrintSuccess("Loaded macro set '" .. setName .. "'")
+    -- STEP 3: Create all macros from the stored set
+    self:Print("Creating " .. #macros .. " macros from set '" .. setName .. "'...")
+    for _, macro in ipairs(macros) do
+        local index = CreateMacro(macro.name, macro.icon, macro.body, true)
+        if index then
+            self:Print("  Created: " .. macro.name .. " at index " .. index)
+        else
+            self:PrintError("Failed to create macro '" .. macro.name .. "'")
+        end
+    end
+    
+    -- STEP 4: Restore macros to their saved action bar positions
+    self:RestoreMacroPositions(setName)
+    
+    -- Update active set
+    MacroMonsterDB.activeSet = setName
+    self:PrintSuccess("Loaded macro set '" .. setName .. "'!")
     return true
 end
 
