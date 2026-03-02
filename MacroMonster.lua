@@ -1,11 +1,8 @@
 -- MacroMonster: Enhanced macro management for WoW TBC Classic
 local AddonName, Addon = ...
 
--- Debug: Check if addon is loading
-DEFAULT_CHAT_FRAME:AddMessage("MacroMonster loading... AddonName=" .. tostring(AddonName))
-
 -- Version info
-Addon.VERSION = "0.1.0"
+Addon.VERSION = "0.1.1"
 Addon.AUTHOR = "Zyxw - Spineshatter"
 
 -- Addon namespace
@@ -21,6 +18,12 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_LOGOUT")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+eventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+
+-- Throttle auto-snapshot on bar changes (user manually arranging bars)
+local lastAutoSnapshotTime = 0
+local AUTO_SNAPSHOT_THROTTLE = 2  -- seconds between auto-snapshots
+local isLoadingSet = false  -- Prevent snapshots during set load
 
 -- Event handler
 eventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -35,6 +38,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         Addon:OnPlayerLogout()
     elseif event == "ACTIVE_TALENT_GROUP_CHANGED" then
         Addon:OnSpecChanged()
+    elseif event == "ACTIONBAR_SLOT_CHANGED" then
+        Addon:OnActionBarSlotChanged(...)
     end
 end)
 
@@ -66,10 +71,61 @@ function Addon:OnPlayerLogin()
     self:Print("Ready! Type /mm to open the interface or use /macro to see both windows.")
 end
 
+-- Save live state for active set before logout
+function Addon:OnPlayerLogout()
+    local activeSet = self:GetActiveSetName()
+    if activeSet and self:MacroSetExists(activeSet) then
+        self:SnapshotSetState(activeSet)
+    end
+end
+
+-- Auto-snapshot when user manually arranges bars (throttled)
+function Addon:OnActionBarSlotChanged(slotID)
+    -- Don't auto-snapshot while we're loading a set (prevents conflicts with spec changes)
+    if isLoadingSet then
+        return
+    end
+    
+    local activeSet = self:GetActiveSetName()
+    if not activeSet or not self:MacroSetExists(activeSet) then
+        return
+    end
+
+    -- Check if a macro was placed in this slot
+    local actionType, id = GetActionInfo(slotID)
+    if actionType ~= "macro" then
+        return
+    end
+
+    -- Throttle to avoid excessive saves during rapid bar changes
+    local currentTime = GetTime()
+    if currentTime - lastAutoSnapshotTime < AUTO_SNAPSHOT_THROTTLE then
+        return
+    end
+
+    lastAutoSnapshotTime = currentTime
+    self:SnapshotSetState(activeSet)
+end
+
+-- Set the loading flag to prevent nested snapshots during set loads
+function Addon:SetLoadingSet(flag)
+    isLoadingSet = flag
+end
+
 -- Handle spec changes (dual spec)
 function Addon:OnSpecChanged()
-    -- Delay checking the spec until WoW has fully switched talent groups
-    C_Timer.After(1.0, function()
+    -- Immediately snapshot current set before any bars are cleared
+    local activeSet = self:GetActiveSetName()
+    if activeSet and self:MacroSetExists(activeSet) then
+        self:SnapshotSetState(activeSet)
+    end
+    
+    -- Immediately block auto-snapshots during spec change to prevent race conditions
+    self:SetLoadingSet(true)
+    
+    -- Wait for WoW to fully complete the spec swap and its internal bar restoration
+    -- Then load our saved macro set for this spec
+    C_Timer.After(1.5, function()
         local currentSpec = GetActiveTalentGroup()
         local specName = (currentSpec == 1) and "primary" or "secondary"
         local assignedSet = self:GetSpecAssignment(specName)
@@ -85,6 +141,7 @@ function Addon:OnSpecChanged()
             end
         else
             self:Print("Spec changed to " .. specName .. " (no macro set assigned)")
+            self:SetLoadingSet(false)
         end
     end)
 end
@@ -198,17 +255,12 @@ end
 
 -- Register slash commands
 function Addon:RegisterSlashCommands()
-    DEFAULT_CHAT_FRAME:AddMessage("Registering slash commands...")
-    
     SLASH_MACROMONSTER1 = "/mm"
     SLASH_MACROMONSTER2 = "/macromonster"
     
     SlashCmdList["MACROMONSTER"] = function(msg)
-        DEFAULT_CHAT_FRAME:AddMessage("Slash command triggered: " .. tostring(msg))
         Addon:HandleSlashCommand(msg)
     end
-    
-    DEFAULT_CHAT_FRAME:AddMessage("Slash commands registered!")
 end
 
 -- Handle slash commands
