@@ -1,0 +1,8 @@
+package-as: MacroMonster
+
+ignore:
+  - .github
+  - .git
+  - .gitignore
+  - README.md
+  - LICENSE
